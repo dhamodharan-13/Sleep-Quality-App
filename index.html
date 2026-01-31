@@ -36,18 +36,14 @@
 
         body {
             font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-            background: var(--bg-primary);
-            background-image: url('galaxy-bg.png');
-            background-size: cover;
-            background-position: center;
-            background-attachment: fixed;
-            background-repeat: no-repeat;
+            background: linear-gradient(135deg, #0c1929 0%, #162a43 50%, #0d1f35 100%);
             color: var(--text-primary);
             min-height: 100vh;
             line-height: 1.6;
+            overflow-x: hidden;
         }
 
-        /* Galaxy Starfield Background (Canvas) - Overlay for extra stars */
+        /* Smoky Animated Background Canvas */
         #galaxy-canvas {
             position: fixed;
             top: 0;
@@ -56,8 +52,6 @@
             height: 100%;
             z-index: 0;
             pointer-events: none;
-            opacity: 0.6;
-            /* Blend with background image */
         }
 
         /* Custom Cursor - Desktop Only */
@@ -953,101 +947,115 @@
             const canvas = document.getElementById('galaxy-canvas');
             const ctx = canvas.getContext('2d');
             let width, height;
-            let stars = [];
-            let mouseX = window.innerWidth / 2, mouseY = window.innerHeight / 2;
-            let targetX = 0, targetY = 0; // For smooth parallax
-
-            function resize() {
-                width = window.innerWidth;
-                height = window.innerHeight;
-                canvas.width = width;
-                canvas.height = height;
-                initStars();
-            }
-
-            class Star {
+            // --- Smoky Cloud Animation ---
+            class SmokeParticle {
                 constructor() {
                     this.reset();
                 }
                 reset() {
                     this.x = Math.random() * width;
                     this.y = Math.random() * height;
-                    this.z = Math.random() * 2 + 0.5; // Depth factor
-                    this.size = Math.random() * 1.5;
-                    this.color = Math.random() > 0.8 ? '#c4b5fd' : (Math.random() > 0.9 ? '#a0c4ff' : 'white');
-                    this.alpha = Math.random() * 0.8 + 0.2;
-                    this.baseAlpha = this.alpha;
-                    this.twinkleSpeed = Math.random() * 0.05 + 0.01;
+                    this.radius = Math.random() * 300 + 100;
+                    this.speedX = Math.random() * 0.3 - 0.15;
+                    this.speedY = Math.random() * 0.2 - 0.1;
+                    this.opacity = Math.random() * 0.08 + 0.02;
+                    // Dark blue/teal color palette
+                    const colors = [
+                        'rgba(20, 60, 90, ',    // Deep blue
+                        'rgba(30, 80, 110, ',   // Medium blue
+                        'rgba(15, 50, 80, ',    // Dark blue
+                        'rgba(25, 90, 120, ',   // Teal blue
+                        'rgba(40, 100, 130, ',  // Lighter teal
+                    ];
+                    this.color = colors[Math.floor(Math.random() * colors.length)];
                 }
                 update() {
-                    // Parallax movement opposite to mouse
-                    // dx/dy based on distance from center
-                    let parallaxX = (mouseX - width / 2) * 0.02 * this.z;
-                    let parallaxY = (mouseY - height / 2) * 0.02 * this.z;
+                    this.x += this.speedX;
+                    this.y += this.speedY;
 
-                    this.x -= parallaxX * 0.05; // Smoothly apply force
-                    this.y -= parallaxY * 0.05;
-
-                    // Natural slow drift
-                    this.x += 0.05 * this.z;
-
-                    // Wrap around screen
-                    if (this.x < 0) this.x = width;
-                    if (this.x > width) this.x = 0;
-                    if (this.y < 0) this.y = height;
-                    if (this.y > height) this.y = 0;
-
-                    // Twinkle
-                    this.alpha = this.baseAlpha + Math.sin(Date.now() * this.twinkleSpeed) * 0.2;
+                    // Wrap around
+                    if (this.x < -this.radius) this.x = width + this.radius;
+                    if (this.x > width + this.radius) this.x = -this.radius;
+                    if (this.y < -this.radius) this.y = height + this.radius;
+                    if (this.y > height + this.radius) this.y = -this.radius;
                 }
                 draw() {
-                    ctx.fillStyle = this.color;
-                    ctx.globalAlpha = Math.max(0, Math.min(1, this.alpha));
+                    const gradient = ctx.createRadialGradient(
+                        this.x, this.y, 0,
+                        this.x, this.y, this.radius
+                    );
+                    gradient.addColorStop(0, this.color + this.opacity + ')');
+                    gradient.addColorStop(0.5, this.color + (this.opacity * 0.5) + ')');
+                    gradient.addColorStop(1, this.color + '0)');
+
+                    ctx.fillStyle = gradient;
                     ctx.beginPath();
-                    ctx.arc(this.x, this.y, this.size * this.z, 0, Math.PI * 2);
+                    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
                     ctx.fill();
                 }
             }
 
-            function initStars() {
-                stars = [];
-                for (let i = 0; i < 400; i++) stars.push(new Star());
+            let smokeParticles = [];
+
+            function initSmoke() {
+                smokeParticles = [];
+                const particleCount = Math.floor((width * height) / 40000);
+                for (let i = 0; i < Math.max(20, particleCount); i++) {
+                    smokeParticles.push(new SmokeParticle());
+                }
             }
 
-            function animateGalaxy() {
-                // Clear and Redraw Background
-                ctx.fillStyle = '#0a0a0f';
+            function animateSmoke() {
+                // Dark blue base gradient
+                const bgGradient = ctx.createLinearGradient(0, 0, width, height);
+                bgGradient.addColorStop(0, '#0c1929');
+                bgGradient.addColorStop(0.5, '#162a43');
+                bgGradient.addColorStop(1, '#0d1f35');
+                ctx.fillStyle = bgGradient;
                 ctx.fillRect(0, 0, width, height);
 
-                // Draw Nebula/Glow 
-                let time = Date.now() * 0.0005;
-                // Main glow
-                let g1 = ctx.createRadialGradient(width * 0.5 + Math.sin(time) * 100, height * 0.5 + Math.cos(time) * 100, 0, width * 0.5, height * 0.5, width * 1.2);
-                g1.addColorStop(0, 'rgba(79, 70, 229, 0.15)'); // Purple
-                g1.addColorStop(0.5, 'rgba(6, 182, 212, 0.1)'); // Cyan
-                g1.addColorStop(1, 'transparent');
-
-                ctx.fillStyle = g1;
-                ctx.fillRect(0, 0, width, height);
-
-                // Secondary glow
-                let g2 = ctx.createRadialGradient(width * 0.8, height * 0.2, 0, width * 0.8, height * 0.2, width * 0.6);
-                g2.addColorStop(0, 'rgba(139, 92, 246, 0.1)'); // Violet
-                g2.addColorStop(1, 'transparent');
-                ctx.fillStyle = g2;
-                ctx.fillRect(0, 0, width, height);
-
-                stars.forEach(star => {
-                    star.update();
-                    star.draw();
+                // Draw smoke particles
+                smokeParticles.forEach(particle => {
+                    particle.update();
+                    particle.draw();
                 });
 
-                requestAnimationFrame(animateGalaxy);
+                // Add subtle animated glow
+                const time = Date.now() * 0.0003;
+                const glowX = width * 0.3 + Math.sin(time) * 100;
+                const glowY = height * 0.4 + Math.cos(time * 0.7) * 80;
+
+                const glow = ctx.createRadialGradient(glowX, glowY, 0, glowX, glowY, width * 0.6);
+                glow.addColorStop(0, 'rgba(30, 100, 140, 0.15)');
+                glow.addColorStop(0.5, 'rgba(20, 70, 110, 0.08)');
+                glow.addColorStop(1, 'transparent');
+                ctx.fillStyle = glow;
+                ctx.fillRect(0, 0, width, height);
+
+                // Second glow for depth
+                const glow2X = width * 0.7 + Math.cos(time * 1.3) * 80;
+                const glow2Y = height * 0.6 + Math.sin(time * 0.9) * 60;
+
+                const glow2 = ctx.createRadialGradient(glow2X, glow2Y, 0, glow2X, glow2Y, width * 0.5);
+                glow2.addColorStop(0, 'rgba(25, 80, 120, 0.12)');
+                glow2.addColorStop(1, 'transparent');
+                ctx.fillStyle = glow2;
+                ctx.fillRect(0, 0, width, height);
+
+                requestAnimationFrame(animateSmoke);
+            }
+
+            function resize() {
+                width = window.innerWidth;
+                height = window.innerHeight;
+                canvas.width = width;
+                canvas.height = height;
+                initSmoke();
             }
 
             window.addEventListener('resize', resize);
             resize();
-            animateGalaxy();
+            animateSmoke();
 
             // --- Custom Cursor Logic (Desktop Only) ---
             const isTouchDevice = window.matchMedia('(hover: none)').matches || 'ontouchstart' in window;
