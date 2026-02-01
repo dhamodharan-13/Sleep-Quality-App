@@ -1,8 +1,8 @@
-flask
-flask-cors
-pandas
-numpy
-joblib
-scikit-learn
-gunicorn
-shap
+flask==3.1.2
+flask-cors==5.0.0
+pandas==2.3.2
+numpy==2.3.3
+joblib==1.5.3
+scikit-learn==1.8.0
+gunicorn==23.0.0
+shap==0.50.0
