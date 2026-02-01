@@ -9,6 +9,7 @@ import pandas as pd
 import joblib
 import numpy as np
 import os
+import shap
 
 app = Flask(__name__)
 CORS(app)
@@ -32,14 +33,11 @@ print(f"  Test R²: {model_metrics.get('r2', 'N/A'):.4f}" if model_metrics.get('
 
 # Default valid ranges (fallback if not in model)
 DEFAULT_RANGES = {
-    "Age": {"min": 10, "max": 100, "default": 30},
-    "Sleep Duration": {"min": 1, "max": 14, "default": 7},
+    "Age": {"min": 10, "max": 80, "default": 30},
+    "Sleep Duration": {"min": 1, "max": 12, "default": 7},
     "Stress Level": {"min": 1, "max": 10, "default": 5},
     "Physical Activity Level": {"min": 0, "max": 300, "default": 45},
-    "Heart Rate": {"min": 40, "max": 150, "default": 70},
-    "Daily Steps": {"min": 100, "max": 30000, "default": 6000},
-    "Systolic_BP": {"min": 70, "max": 200, "default": 120},
-    "Diastolic_BP": {"min": 40, "max": 130, "default": 80}
+    "Daily Steps": {"min": 100, "max": 30000, "default": 6000}
 }
 
 # Use model ranges or defaults
@@ -54,15 +52,12 @@ def validate_input(data):
     errors = []
     cleaned = {}
     
-    # Required numeric fields to validate
+    # Required numeric fields to validate (including Sleep Duration now)
     numeric_fields = [
         ("Age", "Age"),
         ("Sleep Duration", "Sleep Duration"),
         ("Stress Level", "Stress Level"),
-        ("Heart Rate", "Heart Rate"),
         ("Daily Steps", "Daily Steps"),
-        ("Systolic_BP", "Systolic Blood Pressure"),
-        ("Diastolic_BP", "Diastolic Blood Pressure"),
         ("Physical Activity Level", "Physical Activity Level")
     ]
     
@@ -91,7 +86,7 @@ def validate_input(data):
                 cleaned[field] = VALID_RANGES[field]["default"]
     
     # Validate categorical fields
-    valid_genders = ["Male", "Female"]
+    valid_genders = ["Male", "Female", "Other"]
     if "Gender" in data:
         if data["Gender"] not in valid_genders:
             errors.append(f"Gender must be one of: {', '.join(valid_genders)}")
@@ -115,6 +110,36 @@ def validate_input(data):
     # Copy other fields
     if "Occupation" in data:
         cleaned["Occupation"] = data["Occupation"]
+    
+    # Age-Occupation Logical Validation
+    age = cleaned.get("Age", 30)
+    occupation = cleaned.get("Occupation", "")
+    
+    # Define minimum ages for professional occupations
+    occupation_min_ages = {
+        "Doctor": 24,
+        "Lawyer": 23,
+        "Nurse": 21,
+        "Engineer": 22,
+        "Scientist": 24,
+        "Accountant": 22,
+        "Software Engineer": 21
+    }
+    
+    # Define maximum ages for certain occupations
+    occupation_max_ages = {
+        "Student": 35  # Reasonable max for students
+    }
+    
+    if occupation in occupation_min_ages:
+        min_age = occupation_min_ages[occupation]
+        if age < min_age:
+            errors.append(f"A {occupation} must be at least {min_age} years old (you entered {int(age)})")
+    
+    if occupation in occupation_max_ages:
+        max_age = occupation_max_ages[occupation]
+        if age > max_age:
+            errors.append(f"Age {int(age)} seems too high for a {occupation}. Max expected: {max_age}")
     
     return cleaned, errors
 
@@ -140,9 +165,8 @@ def predict():
         final_input = pd.DataFrame(columns=model_columns)
         final_input.loc[0] = 0
         
-        # Fill numeric values
-        numeric_cols = ["Age", "Sleep Duration", "Physical Activity Level", "Stress Level", 
-                        "Heart Rate", "Daily Steps", "Systolic_BP", "Diastolic_BP"]
+        # Fill numeric values (including Sleep Duration now)
+        numeric_cols = ["Age", "Sleep Duration", "Physical Activity Level", "Stress Level", "Daily Steps"]
         
         for col in numeric_cols:
             if col in cleaned_data:
@@ -179,53 +203,88 @@ def predict():
         # Generate recommendations based on input
         recommendations = []
         
-        sleep_duration = float(cleaned_data.get("Sleep Duration", 7))
         stress_level = float(cleaned_data.get("Stress Level", 5))
-        heart_rate = float(cleaned_data.get("Heart Rate", 70))
         daily_steps = float(cleaned_data.get("Daily Steps", 6000))
+        activity_level = float(cleaned_data.get("Physical Activity Level", 45))
         
-        if sleep_duration < 7:
-            recommendations.append("💤 Increase sleep to at least 7 hours for optimal rest.")
         if stress_level > 6:
             recommendations.append("🧘 High stress detected. Try meditation or relaxation techniques.")
-        if heart_rate > 80:
-            recommendations.append("❤️ Elevated heart rate. Consider cardiovascular exercises.")
         if daily_steps < 5000:
             recommendations.append("🚶 Aim for at least 5,000 steps daily for better health.")
+        if activity_level < 30:
+            recommendations.append("🏃 Low activity level. Consider adding more exercise to your routine.")
         if prediction < 6:
             recommendations.append("📊 Your sleep quality is below average. Review your lifestyle habits.")
         
         if not recommendations:
             recommendations.append("✅ Great job! Keep maintaining your healthy lifestyle.")
 
-        # Feature importance for this prediction
-        feature_importances = model.feature_importances_
-        importance_dict = dict(zip(model_columns, feature_importances))
-        
-        active_features = []
-        for col in model_columns:
-            if final_input.at[0, col] != 0:
-                active_features.append({
-                    "name": col.replace("_", " ").replace("Occupation ", "").replace("BMI Category ", "").replace("Sleep Disorder ", ""),
-                    "importance": round(importance_dict[col] * 100, 1),
-                    "value": float(final_input.at[0, col])
-                })
-        
-        active_features.sort(key=lambda x: x["importance"], reverse=True)
-        top_features = active_features[:5]
+        # SHAP-based dynamic feature contribution (changes based on input values)
+        try:
+            explainer = shap.TreeExplainer(model)
+            shap_values = explainer.shap_values(final_input)
+            
+            # Calculate absolute contribution percentages
+            shap_abs = np.abs(shap_values[0])
+            total_shap = np.sum(shap_abs)
+            
+            if total_shap > 0:
+                shap_percentages = (shap_abs / total_shap) * 100
+            else:
+                shap_percentages = np.zeros_like(shap_abs)
+            
+            # Build feature list with SHAP contributions
+            active_features = []
+            for i, col in enumerate(model_columns):
+                if shap_percentages[i] > 0.5:  # Only show features with > 0.5% contribution
+                    active_features.append({
+                        "name": col.replace("_", " ").replace("Occupation ", "").replace("BMI Category ", "").replace("Sleep Disorder ", ""),
+                        "importance": round(shap_percentages[i], 1),
+                        "value": float(final_input.at[0, col]),
+                        "contribution": round(float(shap_values[0][i]), 2)  # Positive = helps, Negative = hurts
+                    })
+            
+            # Identify critical factors
+            for feat in active_features:
+                feat["is_critical"] = False
+                name_lower = feat["name"].lower()
+                val = feat["value"]
+                
+                # Logic for marking severity
+                if "stress level" in name_lower and val >= 8:
+                    feat["is_critical"] = True
+                elif "sleep duration" in name_lower and val < 6:
+                    feat["is_critical"] = True
+                elif "daily steps" in name_lower and val < 4000:
+                    feat["is_critical"] = True
+                elif "sleep disorder" in name_lower and "insomnia" in name_lower and val == 1:
+                    feat["is_critical"] = True
+                elif "sleep disorder" in name_lower and "apnea" in name_lower and val == 1:
+                    feat["is_critical"] = True
 
-        # What-If Analysis
+            # Sort by Criticality first, then Importance
+            active_features.sort(key=lambda x: (x["is_critical"], x["importance"]), reverse=True)
+            top_features = active_features[:5]
+        except Exception as e:
+            # Fallback to static feature importance if SHAP fails
+            print(f"SHAP calculation failed: {e}")
+            feature_importances = model.feature_importances_
+            importance_dict = dict(zip(model_columns, feature_importances))
+            
+            active_features = []
+            for col in model_columns:
+                if final_input.at[0, col] != 0:
+                    active_features.append({
+                        "name": col.replace("_", " ").replace("Occupation ", "").replace("BMI Category ", "").replace("Sleep Disorder ", ""),
+                        "importance": round(importance_dict[col] * 100, 1),
+                        "value": float(final_input.at[0, col])
+                    })
+            
+            active_features.sort(key=lambda x: x["importance"], reverse=True)
+            top_features = active_features[:5]
+
+        # What-If Analysis (updated for new features)
         what_if = []
-        
-        if sleep_duration < 9:
-            test_input = final_input.copy()
-            test_input.at[0, "Sleep Duration"] = sleep_duration + 1
-            new_pred = model.predict(test_input)[0]
-            if new_pred > prediction:
-                what_if.append({
-                    "scenario": "+1 hour sleep",
-                    "improvement": round(new_pred - prediction, 1)
-                })
         
         if stress_level > 3:
             test_input = final_input.copy()
@@ -234,6 +293,16 @@ def predict():
             if new_pred > prediction:
                 what_if.append({
                     "scenario": "-2 stress level",
+                    "improvement": round(new_pred - prediction, 1)
+                })
+        
+        if daily_steps < 10000:
+            test_input = final_input.copy()
+            test_input.at[0, "Daily Steps"] = daily_steps + 2000
+            new_pred = model.predict(test_input)[0]
+            if new_pred > prediction:
+                what_if.append({
+                    "scenario": "+2000 daily steps",
                     "improvement": round(new_pred - prediction, 1)
                 })
 
